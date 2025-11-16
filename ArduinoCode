@@ -1,0 +1,152 @@
+#include <Servo.h> 
+// ----------- Mode Selection Switch ----------- 
+const int switchPin = 12; // Connected 
+between pin 12 and GND 
+// ----------- Shared Servo Definitions ----------- 
+Servo servo1, servo2, servo3, servo4, servo5; 
+const int servoPins[5] = {2, 3, 4, 5, 6}; 
+// ----------- EMG Constants ----------- 
+const int emgPin = A1; 
+const int numServos = 5; 
+const int sampleRate = 1000; // Hz 
+const int windowSize = 20; 
+const int neutralPosition = 0; 
+const int maxPosition = 180; 
+const int stepDelay = 300; 
+float rawEMG = 0, filteredEMG = 0, 
+rectifiedEMG = 0, smoothedEMG = 0; 
+float movingAverage[windowSize] = {0}; 
+int index = 0; 
+bool pulseSignal = false; 
+int highPulseCount = 0, lowPulseCount = 0; 
+bool servoState = false; 
+bool isMoving = false; 
+unsigned long lastStepTime = 0; 
+int currentServoIndex = 0; 
+unsigned long lastMoveTriggerTime = 0;
+const unsigned long holdDuration = 2000; 
+void setup() { 
+  // Setup switch 
+  pinMode(switchPin, INPUT_PULLUP); // 
+HIGH when not pressed, LOW when pressed 
+  // Attach all servos 
+  servo1.attach(servoPins[0]); 
+  servo2.attach(servoPins[1]); 
+  servo3.attach(servoPins[2]); 
+  servo4.attach(servoPins[3]); 
+  servo5.attach(servoPins[4]); 
+  // Initialize all servos to 0 degrees 
+  servo1.write(0); 
+  servo2.write(0); 
+  servo3.write(0); 
+  servo4.write(0); 
+  servo5.write(0); 
+  // Start Serial 
+  Serial.begin(9600); 
+} 
+void loop() { 
+  bool switchState = digitalRead(switchPin); 
+  // Show current mode 
+  Serial.print("Switch state: "); 
+  Serial.println(switchState == LOW ? 
+"Bluetooth mode" : "EMG mode");
+  // ----- Bluetooth Mode ----- 
+  if (switchState == LOW) { 
+    if (Serial.available() > 0) { 
+      char command = Serial.read(); 
+      switch (command) { 
+        case '0': 
+          servo1.write(0); servo2.write(0); 
+servo3.write(0); 
+          servo4.write(0); servo5.write(0); 
+          Serial.println("All servos moved to 0 
+degrees"); 
+          break; 
+        case '1': 
+          servo1.write(180); servo2.write(180); 
+servo3.write(180); 
+          servo4.write(180); servo5.write(180); 
+          Serial.println("All servos moved to 180 
+degrees"); 
+          break; 
+      } 
+    } 
+  } else { 
+    // ----- EMG Mode (unchanged) ----- 
+    unsigned long now = millis(); 
+    rawEMG = analogRead(emgPin); 
+    rawEMG = (rawEMG / 1023.0) * 5.0; 
+    static float previousRaw = 0, 
+previousFiltered = 0; 
+    filteredEMG = 0.9 * (previousFiltered + 
+rawEMG - previousRaw); 
+ previousRaw = rawEMG; 
+    previousFiltered = filteredEMG; 
+    rectifiedEMG = abs(filteredEMG); 
+    movingAverage[index] = rectifiedEMG; 
+    index = (index + 1) % windowSize; 
+    smoothedEMG = 0; 
+    for (int i = 0; i < windowSize; i++) 
+smoothedEMG += movingAverage[i]; 
+    smoothedEMG /= windowSize; 
+    static float previousSmoothed = 0; 
+    smoothedEMG = 0.1 * smoothedEMG + 0.9 
+* previousSmoothed; 
+    previousSmoothed = smoothedEMG; 
+    if (smoothedEMG > 0.35) { 
+      pulseSignal = true; 
+      highPulseCount++; 
+      lowPulseCount = 0; 
+    } else { 
+      pulseSignal = false; 
+      lowPulseCount++; 
+      highPulseCount = 0; 
+    } 
+    if ((now - lastMoveTriggerTime) > 
+holdDuration && !isMoving) { 
+      if (highPulseCount >= 250 && !servoState) { 
+        isMoving = true; 
+        servoState = true; 
+        currentServoIndex = 0; 
+        lastStepTime = now;
+         lastMoveTriggerTime = now; 
+        Serial.println("Triggered: Close"); 
+      } else if (lowPulseCount >= 250 && 
+servoState) { 
+        isMoving = true; 
+        servoState = false; 
+        currentServoIndex = 0; 
+        lastStepTime = now; 
+        lastMoveTriggerTime = now; 
+        Serial.println("Triggered: Open"); 
+      } 
+    } 
+    if (isMoving && (now - lastStepTime >= 
+stepDelay)) { 
+      if (currentServoIndex < numServos) { 
+        switch (currentServoIndex) { 
+          case 0: servo1.write(servoState ? 
+maxPosition : neutralPosition); break; 
+          case 1: servo2.write(servoState ? 
+maxPosition : neutralPosition); break; 
+          case 2: servo3.write(servoState ? 
+maxPosition : neutralPosition); break; 
+  case 3: servo4.write(servoState ? 
+maxPosition : neutralPosition); break; 
+          case 4: servo5.write(servoState ? 
+maxPosition : neutralPosition); break; 
+        } 
+        currentServoIndex++; 
+        lastStepTime = now; 
+      } else { 
+        isMoving = false; 
+      } 
+    } 
+    Serial.print("Raw:"); 
+    Serial.print(rawEMG); 
+    Serial.print(", Pulse:"); 
+    Serial.println(pulseSignal); 
+ 
+    delay(1000 / sampleRate); 
+  } 
+}
